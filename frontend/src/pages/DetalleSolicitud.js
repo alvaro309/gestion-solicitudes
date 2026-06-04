@@ -25,9 +25,17 @@ export default function DetalleSolicitud() {
       const res = await api.get(`/solicitudes/${id}`);
       setSolicitud(res.data);
       setComentarios(res.data.comentarios || []);
-      setForm({ titulo: res.data.titulo, descripcion: res.data.descripcion, prioridad: res.data.prioridad, categoria_id: res.data.categoria_id || '' });
-    } catch { navigate('/solicitudes'); }
-    finally { setCargando(false); }
+      setForm({
+        titulo:       res.data.titulo,
+        descripcion:  res.data.descripcion,
+        prioridad:    res.data.prioridad,
+        categoria_id: res.data.categoria_id || ''
+      });
+    } catch {
+      navigate('/solicitudes');
+    } finally {
+      setCargando(false);
+    }
   }, [id, navigate]);
 
   useEffect(() => {
@@ -59,7 +67,18 @@ export default function DetalleSolicitud() {
     }
   };
 
-  // HU-14: Cerrar solicitud
+  // HU-05: Cambiar estado (administrador y responsable)
+  const cambiarEstado = async (nuevoEstado) => {
+    try {
+      await api.patch(`/solicitudes/${id}/estado`, { estado: nuevoEstado });
+      setError('');
+      cargar();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error al cambiar estado');
+    }
+  };
+
+  // HU-14: Cerrar solicitud (administrador)
   const cerrar = async () => {
     if (!window.confirm('¿Cerrar esta solicitud? Esta acción no se puede deshacer.')) return;
     try {
@@ -73,14 +92,26 @@ export default function DetalleSolicitud() {
   if (cargando) return <div style={{ padding: 40, textAlign: 'center' }}>Cargando...</div>;
   if (!solicitud) return null;
 
-  const esAdmin     = usuario?.rol === 'administrador';
+  const esAdmin       = usuario?.rol === 'administrador';
+  const esResponsable = usuario?.rol === 'responsable';
   const esSolicitante = solicitud.solicitante_id === usuario?.id;
-  const puedeCerrar = esAdmin && solicitud.estado !== 'cerrada';
-  const puedeEditar = esSolicitante && solicitud.estado === 'pendiente';
+  const puedeEditar   = esSolicitante && solicitud.estado === 'pendiente';
+  const puedeCambiarEstado = (esAdmin || esResponsable) && solicitud.estado !== 'cerrada';
+  const puedeCerrar   = esAdmin && solicitud.estado !== 'cerrada';
+
+  // Opciones de estado disponibles según estado actual
+  const opcionesEstado = {
+    pendiente:  [{ valor: 'en_proceso', label: '▶ Pasar a En Proceso', color: '#2980b9' }],
+    en_proceso: [
+      { valor: 'pendiente',  label: '↩ Volver a Pendiente',  color: '#f39c12' },
+    ],
+    cerrada: [],
+  };
 
   return (
     <div style={styles.page}>
       <div style={styles.container}>
+
         {/* Header */}
         <div style={styles.header}>
           <button onClick={() => navigate('/solicitudes')} style={styles.backBtn}>← Volver</button>
@@ -89,7 +120,7 @@ export default function DetalleSolicitud() {
               <button onClick={() => setEditando(true)} style={styles.editBtn}>Editar</button>
             )}
             {puedeCerrar && (
-              <button onClick={cerrar} style={styles.closeBtn}>Cerrar Solicitud</button>
+              <button onClick={cerrar} style={styles.closeBtn}>✓ Cerrar Solicitud</button>
             )}
           </div>
         </div>
@@ -118,12 +149,14 @@ export default function DetalleSolicitud() {
                 onChange={e => setForm({ ...form, descripcion: e.target.value })}
               />
               <div style={{ display: 'flex', gap: 12 }}>
-                <select style={styles.input} value={form.prioridad} onChange={e => setForm({ ...form, prioridad: e.target.value })}>
+                <select style={styles.input} value={form.prioridad}
+                  onChange={e => setForm({ ...form, prioridad: e.target.value })}>
                   <option value="baja">Baja</option>
                   <option value="media">Media</option>
                   <option value="alta">Alta</option>
                 </select>
-                <select style={styles.input} value={form.categoria_id} onChange={e => setForm({ ...form, categoria_id: e.target.value })}>
+                <select style={styles.input} value={form.categoria_id}
+                  onChange={e => setForm({ ...form, categoria_id: e.target.value })}>
                   <option value="">Sin categoría</option>
                   {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
@@ -142,13 +175,33 @@ export default function DetalleSolicitud() {
                 <span><b>Categoría:</b> {solicitud.categoria_nombre || '—'}</span>
                 <span><b>Prioridad:</b> {solicitud.prioridad}</span>
                 <span><b>Creada:</b> {new Date(solicitud.created_at).toLocaleString('es-CO')}</span>
-                {solicitud.closed_at && <span><b>Cerrada:</b> {new Date(solicitud.closed_at).toLocaleString('es-CO')}</span>}
+                {solicitud.closed_at && (
+                  <span><b>Cerrada:</b> {new Date(solicitud.closed_at).toLocaleString('es-CO')}</span>
+                )}
               </div>
             </>
           )}
+
+          {/* ── Cambiar estado ── */}
+          {puedeCambiarEstado && !editando && (
+            <div style={styles.estadoSection}>
+              <p style={styles.estadoLabel}>Cambiar estado:</p>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {opcionesEstado[solicitud.estado]?.map(op => (
+                  <button
+                    key={op.valor}
+                    onClick={() => cambiarEstado(op.valor)}
+                    style={{ ...styles.estadoBtn, background: op.color }}
+                  >
+                    {op.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* HU-13: Comentarios */}
+        {/* Comentarios — HU-13 */}
         <div style={styles.card}>
           <h3 style={styles.seccion}>Comentarios ({comentarios.length})</h3>
 
@@ -160,7 +213,9 @@ export default function DetalleSolicitud() {
             <div key={c.id} style={styles.comentario}>
               <div style={styles.comentarioHeader}>
                 <span style={styles.autorNombre}>{c.autor_nombre}</span>
-                <span style={styles.comentarioFecha}>{new Date(c.created_at).toLocaleString('es-CO')}</span>
+                <span style={styles.comentarioFecha}>
+                  {new Date(c.created_at).toLocaleString('es-CO')}
+                </span>
               </div>
               <p style={styles.comentarioTexto}>{c.contenido}</p>
             </div>
@@ -178,6 +233,7 @@ export default function DetalleSolicitud() {
             </form>
           )}
         </div>
+
       </div>
     </div>
   );
@@ -199,6 +255,9 @@ const styles = {
   titulo:           { margin: '0 0 12px', fontSize: 20, color: '#1a1a1a' },
   descripcion:      { margin: '0 0 20px', color: '#555', lineHeight: 1.6 },
   meta:             { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 14, color: '#666' },
+  estadoSection:    { marginTop: 24, paddingTop: 20, borderTop: '1px solid #f0f0f0' },
+  estadoLabel:      { margin: '0 0 10px', fontSize: 14, fontWeight: 600, color: '#444' },
+  estadoBtn:        { padding: '8px 18px', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500 },
   seccion:          { margin: '0 0 16px', color: '#1a3c6e', fontSize: 16 },
   comentario:       { borderLeft: '3px solid #e0e7ff', paddingLeft: 16, marginBottom: 16 },
   comentarioHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: 4 },
